@@ -5,7 +5,7 @@ from bs4 import BeautifulSoup
 import logging
 
 # تنظیمات اولیه
-YOUTUBE_API_URL = "https://www.youtube.com/watch?v=" # برای نمونه از این URL استفاده می‌کنیم
+YOUTUBE_API_URL = "https://www.youtube.com/watch?v=rql0nQ6mWSs" # برای نمونه از این URL استفاده می‌کنیم
 PROXY_LIST_FILE = "proxies.txt" # فایل لیست پروکسی‌ها
 CHECK_INTERVAL = 3600 # هر ساعت (ثانیه)
 
@@ -56,7 +56,7 @@ def fetch_video_views(video_id, proxy=None):
 
 def main():
     # لیست ID ویدیوهایی که می‌خواهید بازدید بزنید (مثال)
-    video_ids = ["dQw4w9WgXcQ", "abc123xyz"] # IDهای واقعی خود را جایگزین کنید
+    video_ids = ["2BdoajgFDtc", "ueZLEXwFlDM", "3k6FYvrUQkQ", "y0hCW06P4nc", "5XeLdcNrSo4"] # IDهای واقعی خود را جایگزین کنید
     
     logging.info("شروع فرآیند بازدید اتوماتیک...")
     
