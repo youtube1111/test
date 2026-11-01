@@ -4,14 +4,12 @@ on:
   schedule:
     # هر ساعت دقیقاً در دقیقه ۰ اجرا می‌شود
     - cron: '0 * * * *'
-  
-  # همچنین می‌توانید با کلیک روی دکمه Run Workflow در تب Actions مخزن، دستی هم اجرا کنید
   workflow_dispatch:
 
 jobs:
   run-views:
     runs-on: ubuntu-latest
-
+    timeout-minutes: 60          # ← اضافه شد
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -28,7 +26,6 @@ jobs:
 
       - name: Run YouTube Views Script
         env:
-          # اگر نیاز به متغیرهای محیطی دارید اینجا تعریف کنید
           PYTHONPATH: .
         run: |
           echo "شروع بازدید از ویدیوها..."
