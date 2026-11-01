@@ -12,10 +12,10 @@ from urllib.parse import urljoin
 # ------------------------------------------------------------------
 # تنظیمات
 # ------------------------------------------------------------------
-YOUTUBE_BASE = "https://www.youtube.com/watch?v="
-PROXY_FILE   = "proxies.txt"
+YOUTUBE_BASE   = "https://www.youtube.com/watch?v="
+PROXY_FILE     = "proxies.txt"
 DEFAULT_TIMEOUT = 30
-VIEW_DURATION = 300          # 5 دقیقه به ثانیه (برای هر ویدیو)
+VIEW_DURATION   = 300          # 5 دقیقه به ثانیه (برای هر ویدیو)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -36,8 +36,31 @@ def load_proxies() -> list[str]:
     logging.info(f"Loaded {len(proxies)} proxies.")
     return proxies
 
-def get_random_proxy(proxies: list[str]) -> str | None:
-    return random.choice(proxies) if proxies else None
+async def is_proxy_working(proxy: str, session: aiohttp.ClientSession) -> bool:
+    """
+    یک درخواست کوچک به یک سرویس عمومی (ipify) می‌فرستد
+    تا ببینیم پروکسی کار می‌کند یا نه.
+    """
+    test_url = "https://api.ipify.org?format=json"
+    proxy_url = f"http://{proxy}"          # فرضی: فقط http://host:port
+
+    try:
+        async with session.get(
+            test_url,
+            proxy=proxy_url,
+            timeout=aiohttp.ClientTimeout(total=10)
+        ) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                # اگر IP برگشت داده شد، پروکسی سالم است
+                logging.debug(f"Proxy {proxy} returned IP {data.get('ip')}")
+                return True
+            else:
+                logging.debug(f"Proxy {proxy} returned status {resp.status}")
+                return False
+    except Exception as e:
+        logging.debug(f"Proxy {proxy} failed: {e}")
+        return False
 
 async def fetch_video(video_id: str, proxy: str | None, session: aiohttp.ClientSession) -> bool:
     url = f"{YOUTUBE_BASE}{video_id}"
@@ -77,16 +100,36 @@ async def run_cycle(video_ids: list[str], proxies: list[str]):
     semaphore = asyncio.Semaphore(5)  # حداکثر 5 درخواست همزمان
 
     async with aiohttp.ClientSession() as session:
+        # ------------------------------------------------------------------
+        # 1️⃣  پیش‌بررسی تمام پروکسی‌ها (اختیاری ولی بهتر)
+        # ------------------------------------------------------------------
+        valid_proxies = []
+        for p in proxies:
+            if await is_proxy_working(p, session):
+                valid_proxies.append(p)
+            else:
+                logging.info(f"Proxy {p} discarded – not working")
+        if not valid_proxies:
+            logging.warning("No working proxies found – falling back to direct connections.")
+            valid_proxies = [None]   # استفاده از اتصال مستقیم
+
+        # ------------------------------------------------------------------
+        # 2️⃣  اجرای واقعی
+        # ------------------------------------------------------------------
         async def sem_task(vid):
             async with semaphore:
-                return await fetch_video(vid, get_random_proxy(proxies), session)
+                # انتخاب پروکسی تصادفی از فهرست معتبر
+                proxy = random.choice(valid_proxies) if valid_proxies else None
+                return await fetch_video(vid, proxy, session)
 
         tasks = [asyncio.create_task(sem_task(vid)) for vid in video_ids]
         await asyncio.gather(*tasks)
 
 def main():
-    video_ids = ["2BdoajgFDtc", "ueZLEXwFlDM", "3k6FYvrUQkQ",
-                 "y0hCW06P4nc", "5XeLdcNrSo4"]
+    video_ids = [
+        "2BdoajgFDtc", "ueZLEXwFlDM", "3k6FYvrUQkQ",
+        "y0hCW06P4nc", "5XeLdcNrSo4"
+    ]
     proxies = load_proxies()
 
     # چاپ متغیرهای محیطی مهم برای تشخیص مشکل
