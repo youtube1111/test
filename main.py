@@ -5,6 +5,7 @@ import time
 import logging
 import asyncio
 import aiohttp
+import sys
 from urllib.parse import urljoin
 
 # ------------------------------------------------------------------
@@ -13,7 +14,7 @@ from urllib.parse import urljoin
 YOUTUBE_BASE = "https://www.youtube.com/watch?v="
 PROXY_FILE   = "proxies.txt"
 DEFAULT_TIMEOUT = 30
-VIEW_DURATION = 300  # 5 دقیقه به ثانیه (برای هر ویدیو)
+VIEW_DURATION = 300          # 5 دقیقه به ثانیه (برای هر ویدیو)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -32,19 +33,11 @@ def load_proxies() -> list[str]:
         return [line.strip() for line in f if line.strip()]
 
 def get_random_proxy(proxies: list[str]) -> str | None:
-    if not proxies:
-        return None
-    return random.choice(proxies)
+    return random.choice(proxies) if proxies else None
 
 async def fetch_video(video_id: str, proxy: str | None, session: aiohttp.ClientSession) -> bool:
-    """
-    درخواست GET به یوتیوب می‌فرستد و سپس به مدت VIEW_DURATION صبر می‌کند.
-    """
     url = f"{YOUTUBE_BASE}{video_id}"
-    
-    # تنظیمات پروکسی برای aiohttp
     proxy_url = f"http://{proxy}" if proxy else None
-    
     headers = {
         "User-Agent": random.choice([
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
@@ -53,57 +46,41 @@ async def fetch_video(video_id: str, proxy: str | None, session: aiohttp.ClientS
     }
 
     try:
-        logging.info(f"🚀 Starting view simulation for {video_id}...")
-        
-        # درخواست GET
-        async with session.get(url, proxy=proxy_url, headers=headers, timeout=aiohttp.ClientTimeout(total=DEFAULT_TIMEOUT)) as resp:
+        logging.info(f"🚀 Starting view simulation for {video_id}…")
+        async with session.get(url, proxy=proxy_url, headers=headers,
+                               timeout=aiohttp.ClientTimeout(total=DEFAULT_TIMEOUT)) as resp:
             if resp.status == 200:
                 logging.info(f"✅ Success: {video_id} (Proxy: {proxy or 'Direct'})")
-                
-                # --- بخش کلیدی: مکث به مدت 5 دقیقه برای هر ویدیو ---
-                logging.info(f"⏳ Waiting {VIEW_DURATION // 60} minutes for {video_id} to register as a view...")
-                await asyncio.sleep(VIEW_DURATION)
-                
+                logging.info(f"⏳ Waiting {VIEW_DURATION // 60} minutes for {video_id} to register as a view…")
+                await asyncio.sleep(VIEW_DURATION)      # 5 دقیقه
                 return True
             else:
                 logging.warning(f"⚠️ {video_id} returned status {resp.status}")
                 return False
-
     except Exception as exc:
         logging.error(f"❌ Error fetching {video_id}: {exc}")
         return False
 
 async def run_cycle(video_ids: list[str], proxies: list[str]):
-    """
-    اجرای همزمان تمام ویدیوها در یک چرخه.
-    """
-    # ایجاد یک سشن مشترک برای همه درخواست‌ها (بهینه‌سازی اتصال)
     async with aiohttp.ClientSession() as session:
-        tasks = []
-        for vid in video_ids:
-            proxy = get_random_proxy(proxies)
-            task = asyncio.create_task(fetch_video(vid, proxy, session))
-            tasks.append(task)
-        
-        # منتظر می‌مانیم تا تمام ویدیوها (همراه با مکث 5 دقیقه‌ای هرکدام) تمام شوند
+        tasks = [asyncio.create_task(fetch_video(vid, get_random_proxy(proxies), session))
+                 for vid in video_ids]
         await asyncio.gather(*tasks)
 
 def main():
-    video_ids = ["2BdoajgFDtc", "ueZLEXwFlDM", "3k6FYvrUQkQ", "y0hCW06P4nc", "5XeLdcNrSo4"]
+    video_ids = ["2BdoajgFDtc", "ueZLEXwFlDM", "3k6FYvrUQkQ",
+                 "y0hCW06P4nc", "5XeLdcNrSo4"]
     proxies = load_proxies()
-    
-    logging.info("Starting automated view script with 5-minute duration per video.")
-    
+
+    logging.info("Starting automated view script with 5‑minute duration per video.")
     try:
-        while True:
-            # اجرای همزمان تمام ویدیوها
-            asyncio.run(run_cycle(video_ids, proxies))
-            
-            logging.info("Cycle complete – sleeping before next round.")
-            time.sleep(60) # یک دقیقه استراحت بین چرخه‌های کامل
-            
+        # یک چرخه فقط
+        asyncio.run(run_cycle(video_ids, proxies))
+        logging.info("Cycle complete – script finished.")
     except KeyboardInterrupt:
         logging.info("Script stopped by user.")
+    finally:
+        sys.exit(0)          # خروج صریح
 
 if __name__ == "__main__":
     main()
