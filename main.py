@@ -1,25 +1,26 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
-import os
-import random
-import time
-import logging
-import asyncio
+import asyncio, random, logging, os, sys, traceback
 import aiohttp
-import sys
-import traceback
-from urllib.parse import urljoin
 from bs4 import BeautifulSoup
 
 # ------------------------------------------------------------------
-# تنظیمات
+# Config
 # ------------------------------------------------------------------
 YOUTUBE_BASE   = "https://www.youtube.com/watch?v="
-DEFAULT_TIMEOUT = 30          # seconds
-VIEW_DURATION   = 300         # 5 minutes per video
-MAX_CONCURRENCY = 100         # تعداد هم‌زمانی برای چک کردن پراکسی‌ها
-PROXY_TIMEOUT   = 10          # timeout برای تست پراکسی
+VIEW_DURATION   = 300          # 5 minutes per video
+MAX_CONCURRENCY = 100
+PROXY_TIMEOUT   = 10
+DEFAULT_TIMEOUT = 30
+MAX_RETRIES     = 3
+
+HEADERS = {
+    "User-Agent": random.choice([
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
+    ]),
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://www.google.com/",
+}
 
 logging.basicConfig(
     level=logging.INFO,
@@ -28,23 +29,20 @@ logging.basicConfig(
 )
 
 # ------------------------------------------------------------------
-# Helpers – دریافت پراکسی از منابع مختلف
+# Helpers – fetch proxy list
 # ------------------------------------------------------------------
 async def fetch_proxies_from_url(session: aiohttp.ClientSession, url: str) -> list[str]:
-    """برگرداندن لیست `ip:port` از جدول موجود در صفحه."""
     try:
         async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
             if resp.status != 200:
                 logging.warning(f"URL {url} returned {resp.status}")
                 return []
-
             html = await resp.text()
             soup = BeautifulSoup(html, "html.parser")
             table = soup.find("table")
             if not table:
                 logging.warning(f"No table found on {url}")
                 return []
-
             proxies = []
             for row in table.tbody.find_all("tr"):
                 cols = row.find_all("td")
@@ -60,41 +58,38 @@ async def fetch_proxies_from_url(session: aiohttp.ClientSession, url: str) -> li
 
 async def gather_all_proxies() -> list[str]:
     urls = [
-        "https://free-proxy-list.net/ssl-proxy.html",          # HTTPS
-        "https://free-proxy-list.net/anonymous-proxy.html",   # HTTP
-        "https://www.sslproxies.org/",                       # HTTPS
-        "https://www.us-proxy.org/",                          # HTTP
-        "https://www.proxyscan.io/proxy/list?type=https",    # HTTPS (API)
-        "https://www.proxyscan.io/proxy/list?type=http",     # HTTP
+        "https://free-proxy-list.net/ssl-proxy.html",
+        "https://free-proxy-list.net/anonymous-proxy.html",
+        "https://www.sslproxies.org/",
+        "https://www.us-proxy.org/",
+        "https://www.proxyscan.io/proxy/list?type=https",
+        "https://www.proxyscan.io/proxy/list?type=http",
     ]
-
     async with aiohttp.ClientSession() as session:
         tasks = [fetch_proxies_from_url(session, url) for url in urls]
         results = await asyncio.gather(*tasks)
-
-    # همگن‌سازی و حذف duplicate
     all_proxies = {p for sublist in results for p in sublist}
     logging.info(f"Fetched {len(all_proxies)} proxies from the web")
     return list(all_proxies)
 
 # ------------------------------------------------------------------
-# Helpers – چک کردن صحت پراکسی (به‌صورت موازی)
+# Helpers – proxy checker
 # ------------------------------------------------------------------
-async def is_proxy_working(proxy: str, session: aiohttp.ClientSession) -> bool:
-    """
-    تست یک پراکسی با ارسال درخواست به https://api.ipify.org?format=json
-    و بررسی اینکه آیا وضعیت 200 برگردانده می‌شود یا نه.
-    """
-    # فرض: پراکسی HTTP. اگر پراکسی HTTPS باشد، این کد را تغییر دهید.
-    proxy_url = f"http://{proxy}"
-    test_url = "https://api.ipify.org?format=json"
+def format_proxy(proxy: str) -> str:
+    """Return full proxy URL usable by aiohttp."""
+    if "://" in proxy:
+        return proxy
+    # Try HTTP first
+    return f"http://{proxy}"
 
+async def is_proxy_working(proxy: str, session: aiohttp.ClientSession) -> bool:
+    proxy_url = format_proxy(proxy)
     try:
         async with session.get(
-            test_url,
-            proxy=proxy_url,
-            timeout=aiohttp.ClientTimeout(total=PROXY_TIMEOUT),
-            ssl=False          # برای پراکسی‌های self‑signed
+                "https://api.ipify.org?format=json",
+                proxy=proxy_url,
+                timeout=aiohttp.ClientTimeout(total=PROXY_TIMEOUT),
+                ssl=False,
         ) as resp:
             if resp.status == 200:
                 data = await resp.json()
@@ -107,78 +102,52 @@ async def is_proxy_working(proxy: str, session: aiohttp.ClientSession) -> bool:
         return False
 
 async def check_proxies_concurrently(proxies: list[str]) -> list[str]:
-    """چک کردن پراکسی‌ها با حداکثر MAX_CONCURRENCY هم‌زمان."""
     valid = []
-
     connector = aiohttp.TCPConnector(limit=MAX_CONCURRENCY, verify_ssl=False)
     async with aiohttp.ClientSession(connector=connector) as session:
-        # ایجاد tasks برای چک کردن همه پراکسی‌ها
         tasks = [asyncio.create_task(is_proxy_working(p, session)) for p in proxies]
-
-        # در حین اجرای tasks، می‌توان خروجی را پردازش کرد
         for proxy, task in zip(proxies, tasks):
             if await task:
                 valid.append(proxy)
-
     logging.info(f"{len(valid)} proxies are working out of {len(proxies)}")
     return valid
 
 # ------------------------------------------------------------------
-# Helpers – دانلود ویدیو (شبیه‌سازی view)
+# Helpers – youtube view
 # ------------------------------------------------------------------
-async def fetch_video(video_id: str, proxy: str | None, session: aiohttp.ClientSession) -> bool:
-    url = f"{YOUTUBE_BASE}{video_id}"
-    proxy_url = f"http://{proxy}" if proxy else None
-
-    logging.info(f"🚀 Starting view simulation for {video_id}…")
-    headers = {
-        "User-Agent": random.choice([
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
-        ]),
-        "Accept-Language": "en-US,en;q=0.9",
-        "Referer": "https://www.google.com/",
-    }
-
-    try:
-        async with session.get(
-            url,
-            proxy=proxy_url,
-            headers=headers,
-            timeout=aiohttp.ClientTimeout(total=DEFAULT_TIMEOUT),
-            ssl=False          # برای پراکسی‌های self‑signed
-        ) as resp:
-            if resp.status == 200:
-                logging.info(f"✅ Success: {video_id} (Proxy: {proxy or 'Direct'})")
-                # انتظار 5 دقیقه برای ثبت view
-                await asyncio.sleep(VIEW_DURATION)
-                return True
-            else:
-                logging.warning(f"⚠️ {video_id} returned status {resp.status}")
+async def fetch_video(video_id: str, session: aiohttp.ClientSession, proxies: list[str]) -> bool:
+    for attempt in range(1, MAX_RETRIES + 1):
+        proxy = random.choice(proxies) if proxies else None
+        proxy_url = format_proxy(proxy) if proxy else None
+        try:
+            async with session.get(
+                    f"{YOUTUBE_BASE}{video_id}",
+                    proxy=proxy_url,
+                    headers=HEADERS,
+                    timeout=aiohttp.ClientTimeout(total=DEFAULT_TIMEOUT),
+                    ssl=False,          # only for the proxy
+            ) as resp:
+                if resp.status == 200:
+                    logging.info(f"✅ Success: {video_id} (Proxy: {proxy or 'Direct'})")
+                    await asyncio.sleep(VIEW_DURATION)
+                    return True
+                if resp.status in (403, 429):
+                    logging.warning(f"{video_id} status {resp.status} – retrying with new proxy")
+                    await asyncio.sleep(2 * attempt)
+                    continue
+                logging.warning(f"{video_id} returned status {resp.status}")
                 return False
-    except Exception as exc:
-        logging.error(f"❌ Error fetching {video_id}: {exc}")
-        logging.debug(traceback.format_exc())
-        return False
+        except Exception as exc:
+            logging.error(f"Attempt {attempt} – Error fetching {video_id}: {exc}")
+            await asyncio.sleep(1 * attempt)
+    return False
 
-# ------------------------------------------------------------------
-# Helpers – اجرای هم‌زمان (5 view هم‌زمان، 100 چک پراکسی)
-# ------------------------------------------------------------------
 async def run_cycle(video_ids: list[str], proxies: list[str]):
-    semaphore = asyncio.Semaphore(5)   # حداکثر 5 view هم‌زمان
-
-    # چک کردن پراکسی‌ها (با concurrency بالا)
-    valid_proxies = await check_proxies_concurrently(proxies)
-
-    if not valid_proxies:
-        logging.warning("No working proxies found – falling back to direct connections.")
-        valid_proxies = [None]
-
+    semaphore = asyncio.Semaphore(5)   # max 5 concurrent views
     async with aiohttp.ClientSession() as session:
         async def sem_task(vid):
             async with semaphore:
-                proxy = random.choice(valid_proxies) if valid_proxies else None
-                return await fetch_video(vid, proxy, session)
+                return await fetch_video(vid, session, proxies)
 
         tasks = [asyncio.create_task(sem_task(v)) for v in video_ids]
         await asyncio.gather(*tasks)
@@ -187,23 +156,20 @@ async def run_cycle(video_ids: list[str], proxies: list[str]):
 # main()
 # ------------------------------------------------------------------
 def main():
-    # دریافت پراکسی‌های تازه
     proxies = asyncio.run(gather_all_proxies())
+    valid_proxies = asyncio.run(check_proxies_concurrently(proxies))
+    if not valid_proxies:
+        logging.warning("No working proxies found – falling back to direct connections.")
+        valid_proxies = [None]
 
-    # لیست ویدیوهای مورد نظر
     video_ids = [
         "2BdoajgFDtc", "ueZLEXwFlDM", "3k6FYvrUQkQ",
         "y0hCW06P4nc", "5XeLdcNrSo4"
     ]
 
-    # چاپ متغیرهای محیطی (اگر در دسترس باشد)
-    logging.debug(f"HTTP_PROXY={os.getenv('HTTP_PROXY')}")
-    logging.debug(f"HTTPS_PROXY={os.getenv('HTTPS_PROXY')}")
-    logging.debug(f"ALL_PROXY={os.getenv('ALL_PROXY')}")
-
     logging.info("Starting automated view script with 5‑minute duration per video.")
     try:
-        asyncio.run(run_cycle(video_ids, proxies))
+        asyncio.run(run_cycle(video_ids, valid_proxies))
         logging.info("Cycle complete – script finished.")
     except KeyboardInterrupt:
         logging.info("Script stopped by user.")
