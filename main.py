@@ -16,7 +16,7 @@ Features
 
 Requirements
 ------------
-pip install aiohttp requests tqdm beautifulsoup4
+pip install aiohttp requests bs4 tqdm
 """
 
 import asyncio
@@ -76,9 +76,12 @@ async def fetch_proxies() -> List[str]:
     url = "https://free-proxy-list.net/"
     proxies: List[str] = []
 
+    # Cloudflare protection – send a realistic User‑Agent
+    headers = {"User-Agent": random.choice(USER_AGENTS)}
+
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=15) as r:
+            async with session.get(url, headers=headers, timeout=15) as r:
                 text = await r.text()
     except Exception as exc:
         log(f"⚠️  Failed to fetch proxy list from {url}: {exc}")
@@ -93,7 +96,7 @@ async def fetch_proxies() -> List[str]:
         ip = cols[0].text.strip()
         port = cols[1].text.strip()
         https = cols[6].text.strip().lower() == "yes"
-        if https:
+        if https:  # keep only HTTPS proxies – they usually work with YouTube
             proxies.append(f"{ip}:{port}")
 
     unique = list(set(proxies))
@@ -166,7 +169,7 @@ async def view_video(
         async with session.get(
             url,
             headers=headers,
-            proxy=f"http://{proxy}",
+            proxy=f"http://{proxy}",  # use HTTP proxy (works for HTTPS URLs)
             timeout=aiohttp.ClientTimeout(total=VIEW_TIMEOUT),
         ) as resp:
             if resp.status == 200:
