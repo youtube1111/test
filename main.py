@@ -6,13 +6,13 @@ YouTube view‑simulation script (Python 3.11+)
 
 Features
 --------
-•  Scrapes free public HTTP/HTTPS proxies from proxyscan.io
-•  Health‑checks each proxy (simple GET to https://www.google.com)
-•  Rotates realistic User‑Agent strings
-•  Uses aiohttp for concurrent HTTP requests
-•  Handles 403/timeout errors and retries with a fresh proxy
-•  Logs every step in a clear, timestamped format
-•  Works with both HTTP and HTTPS proxies
+• Scrapes free public HTTP/HTTPS proxies from free-proxy-list.net
+• Health‑checks each proxy (simple GET to https://www.google.com)
+• Rotates realistic User‑Agent strings
+• Uses aiohttp for concurrent HTTP requests
+• Handles 403/timeout errors and retries with a fresh proxy
+• Logs every step in a clear, timestamped format
+• Works with both HTTP and HTTPS proxies
 
 Requirements
 ------------
@@ -21,7 +21,6 @@ pip install aiohttp requests tqdm beautifulsoup4
 
 import asyncio
 import random
-import re
 import sys
 import time
 from datetime import datetime
@@ -30,6 +29,7 @@ from typing import List, Optional
 
 import aiohttp
 import requests
+from bs4 import BeautifulSoup
 from tqdm import tqdm
 
 # --------------------------------------------------------------------------- #
@@ -65,59 +65,37 @@ def log(msg: str) -> None:
     """Print a timestamped log line."""
     print(f"{datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} - {msg}")
 
-
 # --------------------------------------------------------------------------- #
 # Proxy utilities
 # --------------------------------------------------------------------------- #
 async def fetch_proxies() -> List[str]:
     """
-    Scrape HTTPS and HTTP proxies from proxyscan.io.
-
-    The function uses a context‑managed ClientSession so the session
-    is closed automatically.  A realistic User‑Agent header is added
-    to avoid being blocked.
+    Scrape HTTPS and HTTP proxies from free-proxy-list.net.
+    Returns a list of strings in the form 'ip:port'.
     """
-    urls = [
-        "https://www.proxyscan.io/proxy/list?type=https",
-        "https://www.proxyscan.io/proxy/list?type=http",
-    ]
-
+    url = "https://free-proxy-list.net/"
     proxies: List[str] = []
 
-    for url in urls:
-        try:
-            # Context‑managed session – it will be closed automatically
-            async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    url,
-                    timeout=15,
-                    headers={"User-Agent": random.choice(USER_AGENTS)},
-                ) as r:
-                    text = await r.text()
-        except Exception as exc:
-            log(f"⚠️  Failed to fetch proxy list from {url}: {exc}")
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=15) as r:
+                text = await r.text()
+    except Exception as exc:
+        log(f"⚠️  Failed to fetch proxy list from {url}: {exc}")
+        return proxies
+
+    soup = BeautifulSoup(text, "html.parser")
+    rows = soup.select("#proxylisttable tbody tr")
+    for row in rows:
+        cols = row.find_all("td")
+        if len(cols) < 7:
             continue
+        ip = cols[0].text.strip()
+        port = cols[1].text.strip()
+        https = cols[6].text.strip().lower() == "yes"
+        if https:
+            proxies.append(f"{ip}:{port}")
 
-        # -------------------------------------------------------------------
-        # 1️⃣  Regex approach – works for the current layout of proxyscan.io
-        # -------------------------------------------------------------------
-        found = re.findall(r'(\d{1,3}(?:\.\d{1,3}){3}:\d{1,5})', text)
-        proxies.extend(found)
-
-        # -------------------------------------------------------------------
-        # 2️⃣  BeautifulSoup fallback (uncomment if the regex returns 0)
-        # -------------------------------------------------------------------
-        # from bs4 import BeautifulSoup
-        # soup = BeautifulSoup(text, "html.parser")
-        # rows = soup.select("table.proxylist tr")   # adjust selector if needed
-        # for row in rows:
-        #     cells = row.find_all("td")
-        #     if len(cells) >= 2:
-        #         ip = cells[0].get_text(strip=True)
-        #         port = cells[1].get_text(strip=True)
-        #         proxies.append(f"{ip}:{port}")
-
-    # Deduplicate and return
     unique = list(set(proxies))
     log(f"✅  Fetched {len(unique)} raw proxies")
     return unique
@@ -144,6 +122,9 @@ async def filter_proxies(raw_proxies: List[str]) -> List[str]:
     Filter the raw proxy list to only those that are alive.
     Uses an async health‑check against https://www.google.com.
     """
+    if not raw_proxies:
+        return []
+
     log("🔎  Testing proxies for liveliness (may take a few minutes)...")
 
     alive: List[str] = []
