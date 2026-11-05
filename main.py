@@ -164,7 +164,7 @@ def main():
 
     video_ids = [
         "0bSAj8wDPik", "ueZLEXwFlDM", "3k6FYvrUQkQ",
-        "y0hCW06P4nc", "5XeLdcNrSo4"
+        "y0hCW06P4nc", "5XeLdcNrSo4", "QT_sqIYJjp0"
     ]
 
     logging.info("Starting automated view script with 5‑minute duration per video.")
