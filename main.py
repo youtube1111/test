@@ -163,7 +163,7 @@ def main():
         valid_proxies = [None]
 
     video_ids = [
-        "iJm9oxyYL08", "ueZLEXwFlDM", "3k6FYvrUQkQ",
+        "0bSAj8wDPik", "ueZLEXwFlDM", "3k6FYvrUQkQ",
         "y0hCW06P4nc", "5XeLdcNrSo4"
     ]
 
