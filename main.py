@@ -163,8 +163,8 @@ def main():
         valid_proxies = [None]
 
     video_ids = [
-        "0bSAj8wDPik", "ueZLEXwFlDM", "3k6FYvrUQkQ",
-        "y0hCW06P4nc", "5XeLdcNrSo4", "QT_sqIYJjp0"
+        "wvsid4kkp0U", "OaA15TwOfw0", "_rBfNrtQKRk",
+        "FZVaJn5zUhE", "K7RcqLRdQG4", "SlbJYBh_EvA"
     ]
 
     logging.info("Starting automated view script with 5‑minute duration per video.")
